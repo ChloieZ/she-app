@@ -1,0 +1,21 @@
+<resources>
+    <string name="app_name">她空间</string>
+    <string name="map_title">她空间 · 女性友好地图</string>
+    <string name="search_hint">搜索酒店/商场/餐厅…</string>
+    <string name="btn_vote_now">立即投票</string>
+    <string name="btn_friendly">女性友好</string>
+    <string name="btn_not_friendly">不够友好</string>
+    <string name="btn_very_unfriendly">很不友好</string>
+    <string name="vote_success">感谢你的投票！</string>
+    <string name="nearby_places">定位到附近店铺</string>
+    <string name="manual_input">手动输入店名</string>
+    <string name="friendly_green">友好 · 绿色</string>
+    <string name="friendly_yellow">一般 · 黄色</string>
+    <string name="friendly_red">不友好 · 红色</string>
+    <string name="no_places_found">未找到附近店铺</string>
+    <string name="enter_place_name">请输入店铺名称</string>
+    <string name="votes_count">%d 人投票</string>
+    <string name="friendly_level">友好度: %s</string>
+    <string name="my_location">我的位置</string>
+    <string name="location_permission_required">需要定位权限才能使用附近投票功能</string>
+</resources>
