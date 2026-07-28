@@ -26,12 +26,12 @@ class PlaceRepository(private val db: AppDatabase) {
     ) {
         val userId = TokenManager.getEmail() ?: "anonymous"
         val url = "${ApiClient.getBaseUrl()}api/vote"
-        android.util.Log.i("HerSpaceVote", "POST $url place=$placeName type=$voteType user=$userId")
+        // android.util.Log.i("HerSpaceVote", "POST $url place=$placeName type=$voteType user=$userId")
         try {
             val resp = api.submitVote(VoteRequest(placeId = placeId, voteType = voteType, placeName = placeName, lat = lat, lng = lng, userId = userId))
-            android.util.Log.i("HerSpaceVote", "vote ok: success=${resp.success} total=${resp.place?.totalVotes}")
+            // android.util.Log.i("HerSpaceVote", "vote ok: success=${resp.success} total=${resp.place?.totalVotes}")
         } catch (e: Exception) {
-            android.util.Log.e("HerSpaceVote", "vote failed: ${e.message}")
+            // android.util.Log.e("HerSpaceVote", "vote failed: ${e.message}")
         }
         // 本地缓存
         val vote = VoteEntity(placeId = placeId, placeName = placeName, placeLat = lat, placeLng = lng, voteType = voteType)
