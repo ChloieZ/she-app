@@ -14,6 +14,6 @@ data class VoteEntity(
     val placeName: String,        // 店铺名称
     val placeLat: Double,         // 纬度
     val placeLng: Double,         // 经度
-    val voteType: String,         // "friendly", "not_friendly", "very_unfriendly"
+    val voteType: String,         // "friendly", "generally_friendly", "not_friendly", "very_unfriendly"
     val timestamp: Long = System.currentTimeMillis()
 )

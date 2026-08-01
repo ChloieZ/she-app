@@ -3,17 +3,24 @@ package com.herspace.app.ui.map
 import android.content.Context
 import android.location.Location
 import com.herspace.app.data.api.ApiClient
+import com.herspace.app.data.api.ApiResponse
+import com.herspace.app.data.api.PlaceResponse
 import com.herspace.app.data.api.TokenManager
 import android.widget.Toast
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.herspace.app.data.db.PlaceSummary
 import com.herspace.app.data.model.FriendlinessLevel
 import com.herspace.app.data.repository.PlaceRepository
+import com.herspace.app.data.repository.toSearchResult
 import com.herspace.app.util.LocationHelper
 import com.herspace.app.util.SearchHistoryManager
 import com.herspace.app.util.SearchResult
 import com.herspace.app.util.SharedLocation
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -24,11 +31,17 @@ import kotlin.math.*
 
 /** 一级分类 */
 enum class PlaceCategory(val label: String, val keyword: String) {
+    ALL("全部", ""),
     HOTEL("酒店民宿", "酒店|民宿|宾馆"),
     SHOPPING("商场购物", "购物|商场|百货"),
     BEAUTY("丽人美容", "美容|美发|美甲|SPA"),
-    ATTRACTION("景点游玩", "景点|公园|景区")
+    ATTRACTION("景点游玩", "景点|公园|景区"),
+    FOOD("美食", "美食|餐厅|餐饮|小吃|咖啡|火锅")
 }
+
+/** 除「全部」外的实际分类 */
+val PlaceCategory.realCategories: List<PlaceCategory>
+    get() = PlaceCategory.entries.filter { it != PlaceCategory.ALL }
 
 /** 友好度筛选 */
 enum class FriendlinessFilter(val label: String) {
@@ -39,11 +52,12 @@ enum class FriendlinessFilter(val label: String) {
     UNKNOWN("待探索")
 }
 
-/** 距离筛选 */
-enum class DistanceFilter(val label: String, val maxKm: Float) {
-    NEAR("近", 8f),
-    MID("稍远", 16f),
-    FAR("较远", 32f)
+/** 距离筛选（分段：近 0-8km / 稍远 8-16km / 较远 16km 以上，互不累加） */
+enum class DistanceFilter(val label: String, val minKm: Float, val maxKm: Float) {
+    ALL("全部", 0f, Float.MAX_VALUE),
+    NEAR("近", 0f, 8f),
+    MID("稍远", 8f, 16f),
+    FAR("较远", 16f, Float.MAX_VALUE)
 }
 
 data class MapUiState(
@@ -60,6 +74,7 @@ data class MapUiState(
     val isSearching: Boolean = false,
     val searchError: String? = null,
     val existingVoteType: String? = null,
+    val generallyFriendlyCount: Int = 0,
     val notFriendlyCount: Int = 0,
     val veryUnfriendlyCount: Int = 0,
     val isSearchMode: Boolean = false,
@@ -83,6 +98,8 @@ class MapViewModel(
     init {
         loadLocation()
         loadAllPlaces()
+        // 预设「全部」分类，等定位就绪后再搜索（避免无坐标搜索导致数据不全/错乱）
+        _uiState.value = _uiState.value.copy(selectedCategory = PlaceCategory.ALL)
     }
 
     fun loadLocation() {
@@ -94,6 +111,9 @@ class MapViewModel(
                     currentLocation = location,
                     isLoading = false
                 )
+                // 定位成功后再用精确坐标搜索当前分类
+                val cat = _uiState.value.selectedCategory
+                if (cat != null) searchCategory(cat)
             } else {
                 _uiState.value = _uiState.value.copy(isLoading = false)
             }
@@ -104,6 +124,10 @@ class MapViewModel(
         _uiState.value = _uiState.value.copy(currentLocation = location)
         // 共享给其他页面（如投票页面）
         SharedLocation.update(location)
+        // 定位成功后：若当前选了分类则用精确坐标重新搜索（首次进入时可能没定位导致加载慢/不全）
+        val cat = _uiState.value.selectedCategory
+        if (cat != null) searchCategory(cat)
+        if (_uiState.value.filteredResults.isEmpty()) loadUserPlaces()
     }
 
     fun loadAllPlaces() {
@@ -119,6 +143,7 @@ class MapViewModel(
                 placeSummaries = summaryMap,
                 friendlinessMap = friendlinessMap
             )
+            loadUserPlaces()
         }
     }
 
@@ -141,34 +166,67 @@ class MapViewModel(
         _uiState.value = _uiState.value.copy(
             selectedCategory = category,
             selectedFriendlinessFilter = FriendlinessFilter.ALL,
-            selectedDistanceFilter = DistanceFilter.NEAR // 默认 8 公里
+            selectedDistanceFilter = null // 默认不选距离，展示全部距离数据
         )
         // 搜索该分类下的 POI
         searchCategory(category)
     }
 
-    /** 按分类搜索 POI */
+    /** 按分类搜索 POI（ALL 时并行合并所有分类） */
     private fun searchCategory(category: PlaceCategory) {
         val loc = _uiState.value.currentLocation
+        val cats = if (category == PlaceCategory.ALL) PlaceCategory.ALL.realCategories else listOf(category)
         viewModelScope.launch {
-            val items = repository.categoryPlaces(
-                category.name.lowercase(),
-                "杭州",
-                25,
-                loc?.latitude,
-                loc?.longitude
-            )
-            // 从 API 响应中提取友好度数据（服务端根据投票计算）
-            val friendMap = mutableMapOf<String, FriendlinessLevel>()
-            // 未投票的标记为待探索
-            for (item in items) {
-                friendMap[item.placeId] = FriendlinessLevel.UNKNOWN
+            try {
+                // 并行请求所有分类，加速「全部」加载
+                val allResp = coroutineScope {
+                    cats.map { c ->
+                        async {
+                            try {
+                                ApiClient.api.categoryPlaces(
+                                    c.name.lowercase(), "杭州", 25, loc?.latitude, loc?.longitude
+                                )
+                            } catch (_: Exception) {
+                                ApiResponse<PlaceResponse>()
+                            }
+                        }
+                    }.awaitAll().flatMap { it.results }
+                }.distinctBy { it.id }.toMutableList()
+                // 合并投票地点：全部=所有，具体分类=该分类归属的（覆盖高德搜不到的已投票地点）
+                try {
+                    val voted = ApiClient.api.votedPlaces()
+                    val ids = allResp.map { it.id }.toMutableSet()
+                    for (p in voted.places) {
+                        if (p.totalVotes == 0) continue
+                        if (category != PlaceCategory.ALL && p.category != category.name.lowercase()) continue
+                        if (ids.add(p.id)) allResp.add(p)
+                    }
+                } catch (_: Exception) {}
+                val items = allResp.map { it.toSearchResult() }
+                val friendMap = mutableMapOf<String, FriendlinessLevel>()
+                for (p in allResp) {
+                    // 颜色完全以服务器汇总为准（所有用户看到一致的数据）
+                    val level = when {
+                        p.totalVotes == 0 -> FriendlinessLevel.UNKNOWN
+                        p.friendliness == "friendly" -> FriendlinessLevel.FRIENDLY
+                        p.friendliness == "neutral" -> FriendlinessLevel.NEUTRAL
+                        p.friendliness == "unfriendly" -> FriendlinessLevel.UNFRIENDLY
+                        else -> FriendlinessLevel.UNKNOWN
+                    }
+                    Log.d("HerSpaceMap", "${p.name}: serverVotes=${p.totalVotes} friendliness=${p.friendliness} matched=$level")
+                    friendMap[p.id] = level
+                }
+                _uiState.value = _uiState.value.copy(
+                    poiResults = items,
+                    friendlinessMap = friendMap,
+                    filteredResults = applyFilters(items, friendMap)
+                )
+            } catch (_: Exception) {
+                _uiState.value = _uiState.value.copy(
+                    poiResults = emptyList(),
+                    filteredResults = emptyList()
+                )
             }
-            _uiState.value = _uiState.value.copy(
-                poiResults = items,
-                friendlinessMap = friendMap,
-                filteredResults = applyFilters(items, friendMap)
-            )
         }
     }
 
@@ -213,10 +271,10 @@ class MapViewModel(
             }
             if (!passFriend) return@filter false
 
-            // 距离筛选
+            // 距离筛选（分段区间，互不累加）
             if (state.selectedDistanceFilter != null && userLoc != null) {
                 val distKm = item.distanceTo(userLoc.latitude, userLoc.longitude) / 1000.0
-                distKm <= state.selectedDistanceFilter.maxKm
+                distKm >= state.selectedDistanceFilter.minKm && distKm <= state.selectedDistanceFilter.maxKm
             } else true
         }
     }
@@ -242,14 +300,21 @@ class MapViewModel(
         val q = _uiState.value.searchQuery.trim()
         if (q.isNotBlank()) SearchHistoryManager.add(q)
         viewModelScope.launch {
-            val serverData = repository.getPlaceDetail(result.placeId)
+            var serverData: PlaceResponse? = null
+            try {
+                serverData = repository.getPlaceDetail(result.placeId)
+            } catch (_: Exception) {
+                // 详情请求失败：用地标已有颜色兜底，确保显示当前点击的地点（不残留旧地点）
+            }
             val totalVotes = serverData?.totalVotes ?: 0
             val friendlyVotes = serverData?.friendlyVotes ?: 0
             val friendliness = serverData?.friendliness ?: "neutral"
-            val level = when (friendliness) {
-                "friendly" -> FriendlinessLevel.FRIENDLY
-                "unfriendly" -> FriendlinessLevel.UNFRIENDLY
-                "neutral" -> FriendlinessLevel.NEUTRAL
+            // 综合友好度完全以服务器汇总为准（所有用户看到一致）
+            val level = when {
+                totalVotes == 0 -> FriendlinessLevel.UNKNOWN
+                friendliness == "friendly" -> FriendlinessLevel.FRIENDLY
+                friendliness == "unfriendly" -> FriendlinessLevel.UNFRIENDLY
+                friendliness == "neutral" -> FriendlinessLevel.NEUTRAL
                 else -> FriendlinessLevel.UNKNOWN
             }
 
@@ -275,6 +340,7 @@ class MapViewModel(
                 ),
                 selectedFriendliness = level,
                 existingVoteType = existingType,
+                generallyFriendlyCount = serverData?.generallyFriendlyVotes ?: 0,
                 notFriendlyCount = serverData?.notFriendlyVotes ?: 0,
                 veryUnfriendlyCount = serverData?.veryUnfriendlyVotes ?: 0,
                 searchQuery = "",
@@ -351,6 +417,47 @@ class MapViewModel(
 
     fun refresh() {
         loadAllPlaces()
+        // 重新执行当前分类搜索，保留全量分类数据
+        val cat = _uiState.value.selectedCategory
+        if (cat != null) searchCategory(cat)
+    }
+
+    /** 补充有投票的地点：所有用户共享（服务器全量接口，保证各账号数据一致） */
+    private fun loadUserPlaces() {
+        viewModelScope.launch {
+            try {
+                // 拉取所有有投票记录的地点（不分用户）
+                val resp = ApiClient.api.votedPlaces()
+                val friendMap = _uiState.value.friendlinessMap.toMutableMap()
+                val summaryMap = _uiState.value.placeSummaries.toMutableMap()
+                // 仅「全部」分类时把投票地点合并进地图展示；具体分类只更新颜色数据
+                val isAll = _uiState.value.selectedCategory == PlaceCategory.ALL
+                val poiItems = if (isAll) _uiState.value.poiResults.toMutableList() else null
+                val seenIds = poiItems?.map { it.placeId }?.toMutableSet() ?: mutableSetOf()
+
+                // 颜色完全以服务器汇总为准
+                fun repoLevel(f: String, t: Int) = when {
+                    t == 0 -> FriendlinessLevel.UNKNOWN
+                    f == "friendly" -> FriendlinessLevel.FRIENDLY
+                    f == "neutral" -> FriendlinessLevel.NEUTRAL
+                    f == "unfriendly" -> FriendlinessLevel.UNFRIENDLY
+                    else -> FriendlinessLevel.UNKNOWN
+                }
+                for (p in resp.places) {
+                    if (p.totalVotes == 0) continue
+                    val sid = PlaceSummary(p.id, p.name, p.lat, p.lng, p.totalVotes, p.friendlyVotes)
+                    summaryMap[p.id] = sid
+                    friendMap[p.id] = repoLevel(p.friendliness, p.totalVotes)
+                    if (isAll && poiItems != null && seenIds.add(p.id)) poiItems.add(p.toSearchResult())
+                }
+                _uiState.value = _uiState.value.copy(
+                    placeSummaries = summaryMap,
+                    friendlinessMap = friendMap,
+                    poiResults = poiItems ?: _uiState.value.poiResults,
+                    filteredResults = if (isAll) applyFilters(poiItems ?: emptyList(), friendMap) else _uiState.value.filteredResults
+                )
+            } catch (_: Exception) {}
+        }
     }
 
     /** 从详情卡片直接投票 */
@@ -362,18 +469,27 @@ class MapViewModel(
                 val serverData = repository.getPlaceDetail(place.placeId)
                 val total = serverData?.totalVotes ?: place.totalVotes + 1
                 val friendly = serverData?.friendlyVotes ?: (place.friendlyCount + if (voteType == "friendly") 1 else 0)
+                val generallyF = serverData?.generallyFriendlyVotes ?: (_uiState.value.generallyFriendlyCount + if (voteType == "generally_friendly") 1 else 0)
                 val notF = serverData?.notFriendlyVotes ?: (_uiState.value.notFriendlyCount + if (voteType == "not_friendly") 1 else 0)
                 val veryU = serverData?.veryUnfriendlyVotes ?: (_uiState.value.veryUnfriendlyCount + if (voteType == "very_unfriendly") 1 else 0)
-                val updatedLevel = repository.calculateFriendliness(
-                    PlaceSummary(place.placeId, place.placeName, place.placeLat, place.placeLng, total, friendly)
-                ).let { if (total == 0) FriendlinessLevel.UNKNOWN else it }
+                // 颜色以服务器汇总为准（避免本地 ratio 把「一般」误判为不友好）
+                val updatedLevel = when {
+                    total == 0 -> FriendlinessLevel.UNKNOWN
+                    serverData?.friendliness == "friendly" -> FriendlinessLevel.FRIENDLY
+                    serverData?.friendliness == "neutral" -> FriendlinessLevel.NEUTRAL
+                    serverData?.friendliness == "unfriendly" -> FriendlinessLevel.UNFRIENDLY
+                    else -> FriendlinessLevel.UNKNOWN
+                }
                 _uiState.value = _uiState.value.copy(
                     existingVoteType = voteType,
+                    generallyFriendlyCount = generallyF,
                     notFriendlyCount = notF,
                     veryUnfriendlyCount = veryU,
                     selectedPlaceSummary = PlaceSummary(place.placeId, place.placeName, place.placeLat, place.placeLng, total, friendly),
                     selectedFriendliness = updatedLevel
                 )
+                // 投票后刷新地图上的汇总数据
+                loadAllPlaces()
             } catch (_: Exception) {}
         }
     }

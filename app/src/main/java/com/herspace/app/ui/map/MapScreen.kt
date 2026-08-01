@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color as AndroidColor
 import android.location.Location
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -50,12 +51,15 @@ import com.amap.api.maps.model.BitmapDescriptorFactory
 import com.amap.api.maps.model.LatLng
 import com.amap.api.maps.model.MarkerOptions
 import com.amap.api.maps.model.MyLocationStyle
+import com.herspace.app.data.api.ApiClient
+import com.herspace.app.data.api.AppVersionResponse
 import com.herspace.app.data.model.FriendlinessLevel
 import com.herspace.app.ui.detail.PlaceDetailCard
 import com.herspace.app.ui.theme.*
 import com.herspace.app.util.SearchHistoryManager
 import com.herspace.app.util.SearchResult
 import kotlin.math.*
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class)
 @Composable
@@ -98,6 +102,29 @@ fun MapScreen(
                 ),
                 actions = {
                     var showMenu by remember { mutableStateOf(false) }
+                    var updateInfo by remember { mutableStateOf<AppVersionResponse?>(null) }
+                    val scope = rememberCoroutineScope()
+                    // 检查更新：对比服务器版本号
+                    fun checkUpdate() {
+                        scope.launch {
+                            try {
+                                val v = ApiClient.api.appVersion()
+                                val cur = context.packageManager.getPackageInfo(context.packageName, 0).longVersionCode.toInt()
+                                if (v.versionCode > cur) updateInfo = v
+                                else Toast.makeText(context, "已是最新版本", Toast.LENGTH_SHORT).show()
+                            } catch (_: Exception) {
+                                Toast.makeText(context, "检查更新失败", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+                    // 启动时自动检查一次
+                    LaunchedEffect(Unit) {
+                        try {
+                            val v = ApiClient.api.appVersion()
+                            val cur = context.packageManager.getPackageInfo(context.packageName, 0).longVersionCode.toInt()
+                            if (v.versionCode > cur) updateInfo = v
+                        } catch (_: Exception) {}
+                    }
                     IconButton(onClick = { showMenu = true }) {
                         Icon(Icons.Default.AccountCircle, contentDescription = "用户", tint = Color.White)
                     }
@@ -107,34 +134,63 @@ fun MapScreen(
                             onClick = { showMenu = false }
                         )
                         DropdownMenuItem(
+                            text = { Text("📦 检查更新") },
+                            onClick = { showMenu = false; checkUpdate() }
+                        )
+                        DropdownMenuItem(
                             text = { Text("🚪 退出登录") },
                             onClick = { showMenu = false; onLogout() }
+                        )
+                    }
+                    // 更新提示弹窗
+                    updateInfo?.let { v ->
+                        AlertDialog(
+                            onDismissRequest = { updateInfo = null },
+                            title = { Text("发现新版本 v${v.versionName}") },
+                            text = { Text(v.note.ifBlank { "有新版本可用，点击更新。" }) },
+                            confirmButton = {
+                                TextButton(onClick = {
+                                    updateInfo = null
+                                    try {
+                                        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(v.apkUrl))
+                                        context.startActivity(intent)
+                                    } catch (_: Exception) {
+                                        Toast.makeText(context, "无法打开下载链接", Toast.LENGTH_SHORT).show()
+                                    }
+                                }) { Text("立即更新") }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { updateInfo = null }) { Text("以后再说") }
+                            }
                         )
                     }
                 }
             )
         },
         bottomBar = {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shadowElevation = 8.dp,
-                color = Color.White
-            ) {
-                Button(
-                    onClick = onNavigateToVote,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp)
-                        .height(56.dp),
-                    shape = RoundedCornerShape(28.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = PinkPrimary,
-                        contentColor = Color.White
-                    )
+            // 搜索模式下隐藏「立即投票」按钮
+            if (!state.isSearchMode) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shadowElevation = 8.dp,
+                    color = Color.White
                 ) {
-                    Icon(Icons.Default.LocationOn, contentDescription = null, modifier = Modifier.size(24.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("立即投票", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    Button(
+                        onClick = onNavigateToVote,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp)
+                            .height(56.dp),
+                        shape = RoundedCornerShape(28.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = PinkPrimary,
+                            contentColor = Color.White
+                        )
+                    ) {
+                        Icon(Icons.Default.LocationOn, contentDescription = null, modifier = Modifier.size(24.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("立即投票", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    }
                 }
             }
         }
@@ -247,7 +303,10 @@ fun MapScreen(
             DisposableEffect(lifecycleOwner) {
                 val observer = LifecycleEventObserver { _, event ->
                     when (event) {
-                        Lifecycle.Event.ON_RESUME -> mapView?.onResume()
+                        Lifecycle.Event.ON_RESUME -> {
+                            mapView?.onResume()
+                            viewModel.refresh()
+                        }
                         Lifecycle.Event.ON_PAUSE -> mapView?.onPause()
                         Lifecycle.Event.ON_DESTROY -> mapView?.onDestroy()
                         else -> {}
@@ -388,9 +447,9 @@ fun MapScreen(
                 }
             }
 
-            // ── 左侧竖向距离 Tab ──
+            // ── 左侧竖向距离 Tab（搜索模式下隐藏）──
             AnimatedVisibility(
-                visible = state.selectedCategory != null,
+                visible = !state.isSearchMode && state.selectedCategory != null,
                 modifier = Modifier.align(Alignment.CenterStart)
             ) {
                 DistanceTabs(
@@ -422,8 +481,7 @@ fun MapScreen(
                             friendliness = level,
                             existingVoteType = state.existingVoteType,
                             distanceMeters = dist,
-                            userLat = userLoc?.latitude,
-                            userLng = userLoc?.longitude,
+                            generallyFriendlyCount = state.generallyFriendlyCount,
                             notFriendlyCount = state.notFriendlyCount,
                             veryUnfriendlyCount = state.veryUnfriendlyCount,
                             onDismiss = { viewModel.clearSelection() },
@@ -518,10 +576,12 @@ private fun CategoryTabs(selected: PlaceCategory?, onSelect: (PlaceCategory) -> 
                 ) {
                     Icon(
                         imageVector = when (cat) {
+                            PlaceCategory.ALL -> Icons.Default.Apps
                             PlaceCategory.HOTEL -> Icons.Default.Hotel
                             PlaceCategory.SHOPPING -> Icons.Default.ShoppingCart
                             PlaceCategory.BEAUTY -> Icons.Default.Favorite
                             PlaceCategory.ATTRACTION -> Icons.Default.Tour
+                            PlaceCategory.FOOD -> Icons.Default.Restaurant
                         },
                         contentDescription = null,
                         modifier = Modifier.size(18.dp)
@@ -594,7 +654,7 @@ private fun DistanceTabs(
     Card(
         modifier = Modifier
             .padding(start = 8.dp)
-            .width(80.dp),
+            .width(60.dp),
         shape = RoundedCornerShape(12.dp),
         elevation = CardDefaults.cardElevation(4.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.92f))
@@ -606,6 +666,7 @@ private fun DistanceTabs(
             DistanceFilter.entries.forEach { filter ->
                 val isSelected = filter == selected
                 val icon = when (filter) {
+                    DistanceFilter.ALL -> Icons.Default.AllInclusive
                     DistanceFilter.NEAR -> Icons.Default.NearMe
                     DistanceFilter.MID -> Icons.Default.MyLocation
                     DistanceFilter.FAR -> Icons.Default.Public
@@ -667,48 +728,39 @@ private fun createDotBitmap(color: Color): Bitmap {
     return bitmap
 }
 
-/** 店名标签（放大用）*/
+/** 店名标签（放大用）- 全背景颜色 Tab 样式 */
 private fun createLabelBitmap(name: String, color: Color): Bitmap {
     val textSize = 36f
     val textPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-        this.color = AndroidColor.BLACK
+        this.color = AndroidColor.WHITE
         this.textSize = textSize
+        textAlign = android.graphics.Paint.Align.CENTER
+        isFakeBoldText = true
     }
-    val nameWidth = textPaint.measureText(name).toInt() + 40 // 左右 padding
-    val h = 56 // 标签高度
+    val nameWidth = textPaint.measureText(name).toInt() + 44
+    val h = 56
 
     val bitmap = Bitmap.createBitmap(nameWidth, h, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bitmap)
 
-    // 圆角矩形背景（白色底）
+    // 全背景填充
     val bgPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-        this.color = AndroidColor.WHITE
-        style = android.graphics.Paint.Style.FILL
-    }
-    val rect = android.graphics.RectF(0f, 0f, nameWidth.toFloat(), h.toFloat())
-    canvas.drawRoundRect(rect, 12f, 12f, bgPaint)
-
-    // 左侧色条
-    val barPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
         this.color = color.toArgb()
         style = android.graphics.Paint.Style.FILL
     }
-    canvas.drawRoundRect(
-        android.graphics.RectF(0f, 0f, 6f, h.toFloat()),
-        3f, 3f, barPaint
-    )
+    val rect = android.graphics.RectF(0f, 0f, nameWidth.toFloat(), h.toFloat())
+    canvas.drawRoundRect(rect, 28f, 28f, bgPaint)
 
-    // 店名
-    textPaint.setColor(AndroidColor.parseColor("#333333"))
-    canvas.drawText(name, 28f, h / 2f - ((textPaint.descent() + textPaint.ascent()) / 2f), textPaint)
-
-    // 描边
+    // 白色描边
     val stroke = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-        this.color = AndroidColor.parseColor("#E0E0E0")
+        this.color = AndroidColor.WHITE
         style = android.graphics.Paint.Style.STROKE
-        strokeWidth = 1.5f
+        strokeWidth = 2f
     }
-    canvas.drawRoundRect(rect, 12f, 12f, stroke)
+    canvas.drawRoundRect(rect, 28f, 28f, stroke)
+
+    // 店名（白色居中）
+    canvas.drawText(name, nameWidth / 2f, h / 2f - ((textPaint.descent() + textPaint.ascent()) / 2f), textPaint)
 
     return bitmap
 }

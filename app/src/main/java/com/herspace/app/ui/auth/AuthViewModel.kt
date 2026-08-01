@@ -64,7 +64,7 @@ class AuthViewModel : ViewModel() {
                     _uiState.value = _uiState.value.copy(isLoading = false, error = resp.error ?: "操作失败")
                 }
             } catch (e: Exception) {
-                val mode = if (ApiClient.isDebugMode()) "调试" else "线上"
+                val mode = "线上"
                 val url = if (s.isLoginMode) "${ApiClient.getBaseUrl()}api/auth/login" else "${ApiClient.getBaseUrl()}api/auth/register"
                 _uiState.value = _uiState.value.copy(isLoading = false, error = "[$mode] $url — ${e.message ?: "网络错误"}")
             }

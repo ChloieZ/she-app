@@ -62,10 +62,12 @@ class VoteViewModel(
             // 优先使用高德地图共享的定位（更准确）
             val location = SharedLocation.get() ?: locationHelper.getCurrentLocation()
             if (location != null) {
+                // 自动拉取附近地点列表，按距离从近到远排序，只保留一级分类内的地点
                 val places = repository.nearbyPlaces(
-                    location.latitude, location.longitude, 1000, 20
+                    location.latitude, location.longitude, 10000, 50
                 )
-                val sorted = places.sortedBy { it.distanceTo(location.latitude, location.longitude) }
+                val filtered = places.filter { it.isInPrimaryCategory() }
+                val sorted = filtered.sortedBy { it.distanceTo(location.latitude, location.longitude) }
                 _uiState.value = _uiState.value.copy(
                     nearbyPlaces = sorted,
                     step = VoteStep.SELECTING
@@ -73,7 +75,7 @@ class VoteViewModel(
                 if (sorted.isEmpty()) {
                     _uiState.value = _uiState.value.copy(
                         isManualInput = true,
-                        errorMessage = "附近未找到店铺，可手动输入"
+                        errorMessage = "附近未找到分类内的店铺，可手动输入"
                     )
                 }
             } else {
@@ -84,6 +86,21 @@ class VoteViewModel(
                 )
             }
         }
+    }
+
+    /** 是否属于一级分类（酒店/购物/美容/景点/美食） */
+    private fun SearchResult.isInPrimaryCategory(): Boolean {
+        val keywords = listOf(
+            "酒店", "民宿", "宾馆",
+            "购物", "商场", "百货",
+            "美容", "美发", "美甲", "SPA",
+            "景点", "公园", "景区",
+            "美食", "餐厅", "餐饮", "小吃", "咖啡", "火锅", "饭店", "肯德基", "麦当劳",
+            "快餐", "面馆", "食堂", "意式", "酒家", "食府", "酒楼", "菜馆", "私房菜",
+            "家常菜", "湘菜", "川菜", "粤菜", "杭帮菜", "大院", "山庄", "烧烤", "烤鱼",
+            "烘焙", "蛋糕", "奶茶", "甜品", "茶饮", "海鲜", "自助", "日料", "披萨"
+        )
+        return keywords.any { name.contains(it, true) || type.contains(it, true) }
     }
 
     fun selectPlace(place: SearchResult) {
@@ -142,7 +159,8 @@ class VoteViewModel(
                     placeId = place.placeId,
                     lat = place.lat,
                     lng = place.lng,
-                    voteType = voteType
+                    voteType = voteType,
+                    typeName = place.type
                 )
                 _uiState.value = _uiState.value.copy(
                     step = VoteStep.DONE,

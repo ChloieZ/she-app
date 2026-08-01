@@ -59,4 +59,13 @@ interface HerSpaceApi {
 
     @GET("api/places/{id}/my-vote")
     suspend fun myVote(@Path("id") placeId: String, @Query("user_id") userId: String): MyVoteResponse
+
+    @GET("api/user/places")
+    suspend fun userPlaces(@Query("user_id") userId: String): UserPlacesResponse
+
+    @GET("api/voted-places")
+    suspend fun votedPlaces(): UserPlacesResponse
+
+    @GET("api/app/version")
+    suspend fun appVersion(): AppVersionResponse
 }

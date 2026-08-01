@@ -22,12 +22,15 @@ data class PlaceResponse(
     val totalVotes: Int = 0,
     @SerializedName("friendly_votes")
     val friendlyVotes: Int = 0,
+    @SerializedName("generally_friendly_votes")
+    val generallyFriendlyVotes: Int = 0,
     @SerializedName("not_friendly_votes")
     val notFriendlyVotes: Int = 0,
     @SerializedName("very_unfriendly_votes")
     val veryUnfriendlyVotes: Int = 0,
     val friendliness: String = "neutral",
-    val distance: Double = 0.0
+    val distance: Double = 0.0,
+    val category: String = ""
 )
 
 // ── 投票 ──
@@ -42,7 +45,9 @@ data class VoteRequest(
     val lat: Double,
     val lng: Double,
     @SerializedName("user_id")
-    val userId: String = "anonymous"
+    val userId: String = "anonymous",
+    @SerializedName("type")
+    val typeName: String = ""
 )
 
 data class VoteResponse(
@@ -75,6 +80,20 @@ data class TodayVotesResponse(
 data class MyVoteResponse(
     val voted: Boolean = false,
     val vote: VoteItemResponse? = null
+)
+
+data class UserPlacesResponse(
+    val count: Int = 0,
+    val places: List<PlaceResponse> = emptyList()
+)
+
+// ── 版本更新 ──
+
+data class AppVersionResponse(
+    val versionCode: Int = 0,
+    val versionName: String = "",
+    val note: String = "",
+    val apkUrl: String = ""
 )
 
 // ── 健康检查 ──

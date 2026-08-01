@@ -4,6 +4,7 @@ import android.app.Application
 import com.amap.api.maps.MapsInitializer
 import com.herspace.app.data.api.TokenManager
 import com.herspace.app.util.SearchHistoryManager
+import com.herspace.app.util.VotedPlacesStore
 import com.herspace.app.data.api.ApiClient
 
 class HerSpaceApp : Application() {
@@ -14,6 +15,8 @@ class HerSpaceApp : Application() {
         TokenManager.init(this)
         // 初始化搜索历史
         SearchHistoryManager.init(this)
+        // 初始化投票地点存储
+        VotedPlacesStore.init(this)
         // 初始化 API 客户端（读取上次保存的模式）
         ApiClient.init(this)
 

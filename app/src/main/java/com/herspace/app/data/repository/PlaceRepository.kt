@@ -9,6 +9,7 @@ import com.herspace.app.data.db.PlaceSummary
 import com.herspace.app.data.db.VoteEntity
 import com.herspace.app.data.model.FriendlinessLevel
 import com.herspace.app.util.SearchResult
+import com.herspace.app.util.VotedPlacesStore
 
 class PlaceRepository(private val db: AppDatabase) {
 
@@ -22,20 +23,20 @@ class PlaceRepository(private val db: AppDatabase) {
         placeId: String,
         lat: Double,
         lng: Double,
-        voteType: String
+        voteType: String,
+        typeName: String = ""
     ) {
         val userId = TokenManager.getEmail() ?: "anonymous"
-        val url = "${ApiClient.getBaseUrl()}api/vote"
-        // android.util.Log.i("HerSpaceVote", "POST $url place=$placeName type=$voteType user=$userId")
         try {
-            val resp = api.submitVote(VoteRequest(placeId = placeId, voteType = voteType, placeName = placeName, lat = lat, lng = lng, userId = userId))
-            // android.util.Log.i("HerSpaceVote", "vote ok: success=${resp.success} total=${resp.place?.totalVotes}")
+            val resp = api.submitVote(VoteRequest(placeId = placeId, voteType = voteType, placeName = placeName, lat = lat, lng = lng, userId = userId, typeName = typeName))
         } catch (e: Exception) {
-            // android.util.Log.e("HerSpaceVote", "vote failed: ${e.message}")
         }
-        // 本地缓存
+        // 本地缓存（保持原始类型）——同地点更新投票类型，避免重复记录导致统计错乱
         val vote = VoteEntity(placeId = placeId, placeName = placeName, placeLat = lat, placeLng = lng, voteType = voteType)
-        voteDao.insertVote(vote)
+        val updated = voteDao.updateVoteType(placeId, voteType, System.currentTimeMillis())
+        if (updated == 0) voteDao.insertVote(vote)
+        // 记录到持久化存储（跨安装周期保留）
+        VotedPlacesStore.addPlace(placeId, placeName, lat, lng)
     }
 
     // ── 搜索（走服务端代理的高德 API） ──
@@ -87,6 +88,16 @@ class PlaceRepository(private val db: AppDatabase) {
 
     suspend fun getAllPlaceSummaries(): List<PlaceSummary> {
         return voteDao.getAllPlaceSummaries()
+    }
+
+    /** 获取所有投票的 placeId→最新voteType（用于颜色纠正） */
+    suspend fun getAllVoteTypes(): Map<String, String> {
+        val rows = voteDao.getAllVoteTypes() // 最新在前
+        val map = mutableMapOf<String, String>()
+        for (row in rows) {
+            if (row.placeId !in map) map[row.placeId] = row.voteType
+        }
+        return map
     }
 
     // ── 友好度计算 ──

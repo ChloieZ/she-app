@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SentimentDissatisfied
 import androidx.compose.material.icons.filled.SentimentSatisfied
 import androidx.compose.material.icons.filled.SentimentVeryDissatisfied
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -34,9 +35,9 @@ import com.herspace.app.ui.theme.*
 import com.herspace.app.util.SearchResult
 
 private fun mapVoteLabel(type: String): String = when (type) {
-    "friendly" -> "🥰 女性友好"
-    "not_friendly" -> "😐 不够友好"
-    "very_unfriendly" -> "😡 很不友好"
+    "friendly" -> "🥰 友好"
+    "generally_friendly" -> "🙂 一般"
+    "not_friendly" -> "😐 不友好"
     else -> type
 }
 
@@ -300,10 +301,10 @@ private fun VotingContent(
 
         Spacer(modifier = Modifier.height(48.dp))
 
-        // 三个大按钮
+        // 三个投票按钮
         VoteButton(
             icon = Icons.Default.SentimentSatisfied,
-            label = "女性友好",
+            label = "友好",
             description = "安心、舒适、设施完善",
             color = FriendlyGreen,
             onClick = { onSubmitVote("friendly") }
@@ -312,21 +313,21 @@ private fun VotingContent(
         Spacer(modifier = Modifier.height(16.dp))
 
         VoteButton(
-            icon = Icons.Default.SentimentDissatisfied,
-            label = "不够友好",
-            description = "有改进空间，体验一般",
+            icon = Icons.Default.Star,
+            label = "一般",
+            description = "还可以，整体体验不错",
             color = NeutralYellow,
-            onClick = { onSubmitVote("not_friendly") }
+            onClick = { onSubmitVote("generally_friendly") }
         )
 
         Spacer(modifier = Modifier.height(16.dp))
 
         VoteButton(
-            icon = Icons.Default.SentimentVeryDissatisfied,
-            label = "很不友好",
-            description = "感到不适、不安全、有歧视",
-            color = UnfriendlyRed,
-            onClick = { onSubmitVote("very_unfriendly") }
+            icon = Icons.Default.SentimentDissatisfied,
+            label = "不友好",
+            description = "有改进空间，体验不佳",
+            color = Color(0xFFFF9800),
+            onClick = { onSubmitVote("not_friendly") }
         )
     }
 }

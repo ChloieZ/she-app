@@ -3,7 +3,9 @@ package com.herspace.app.ui.detail
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -13,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.herspace.app.data.db.PlaceSummary
@@ -25,8 +28,7 @@ fun PlaceDetailCard(
     friendliness: FriendlinessLevel,
     existingVoteType: String? = null,
     distanceMeters: Double? = null,
-    userLat: Double? = null,
-    userLng: Double? = null,
+    generallyFriendlyCount: Int = 0,
     notFriendlyCount: Int = 0,
     veryUnfriendlyCount: Int = 0,
     onDismiss: () -> Unit,
@@ -39,6 +41,8 @@ fun PlaceDetailCard(
         FriendlinessLevel.UNFRIENDLY -> UnfriendlyRed
         FriendlinessLevel.UNKNOWN -> Color(0xFF9E9E9E)
     }
+    val bgColor = color.copy(alpha = 0.08f)
+    val textOnColor = Color.White
     var showVoteOptions by remember { mutableStateOf(false) }
     val distText = if (distanceMeters != null) {
         if (distanceMeters < 1000) "${distanceMeters.toInt()}m"
@@ -53,92 +57,150 @@ fun PlaceDetailCard(
         elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White)
     ) {
-        Column(modifier = Modifier.padding(20.dp)) {
-            // 地点名称 + 距离
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(summary.placeName, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = TextPrimary, modifier = Modifier.weight(1f))
-                if (distText != null) {
-                    Text(distText, fontSize = 12.sp, color = TextSecondary)
+        Column {
+            // ── 顶部色条 ——
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(6.dp)
+                    .background(color)
+            )
+
+            Column(modifier = Modifier.padding(20.dp)) {
+                // 地点名称 + 距离 + 友好度标签
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(summary.placeName, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+                        Spacer(Modifier.height(2.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                Modifier
+                                    .size(12.dp)
+                                    .clip(RoundedCornerShape(3.dp))
+                                    .background(color)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(friendliness.label, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = color)
+                            if (distText != null) {
+                                Text(" · $distText", fontSize = 12.sp, color = TextSecondary)
+                            }
+                        }
+                    }
                 }
-            }
-            Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(12.dp))
 
-            // 友好度
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("友好度: ", fontSize = 14.sp, color = TextSecondary)
-                Box(Modifier.size(16.dp).clip(RoundedCornerShape(4.dp)).background(color))
-                Spacer(Modifier.width(6.dp))
-                Text(friendliness.label, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = color)
-            }
-            Spacer(Modifier.height(4.dp))
-            Text("总投票: ${summary.totalVotes}", fontSize = 12.sp, color = TextSecondary)
-            Spacer(Modifier.height(4.dp))
-            Row {
-                Text("🟢 ${summary.friendlyCount} 友好  ", fontSize = 13.sp, color = FriendlyGreen, fontWeight = FontWeight.Medium)
-                Text("🟡 ${notFriendlyCount} 一般  ", fontSize = 13.sp, color = NeutralYellow, fontWeight = FontWeight.Medium)
-                Text("🔴 ${veryUnfriendlyCount} 不友好", fontSize = 13.sp, color = UnfriendlyRed, fontWeight = FontWeight.Medium)
-            }
-
-            // 友好度进度条
-            val ratio = if (summary.totalVotes > 0) summary.friendlyCount.toFloat() / summary.totalVotes else 0f
-            LinearProgressIndicator(progress = ratio, modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)), color = FriendlyGreen, trackColor = Color(0xFFE0E0E0))
-            Spacer(Modifier.height(8.dp))
-
-            // 已投票信息
-            if (existingVoteType != null) {
-                val voteLabel = when (existingVoteType) {
-                    "friendly" -> "🥰 女性友好"
-                    "not_friendly" -> "😐 不够友好"
-                    "very_unfriendly" -> "😡 很不友好"
-                    else -> existingVoteType
+                // ── Tab 式统计 ──
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(bgColor)
+                        .padding(8.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    StatTab("🟢", "${summary.friendlyCount}", "友好", FriendlyGreen)
+                    StatTab("🟡", "${generallyFriendlyCount}", "一般", NeutralYellow)
+                    StatTab("🔴", "${notFriendlyCount + veryUnfriendlyCount}", "不友好", UnfriendlyRed)
                 }
-                Text("我的评价: $voteLabel", fontSize = 13.sp, color = FriendlyGreen, fontWeight = FontWeight.Medium)
                 Spacer(Modifier.height(4.dp))
-            }
+                Text("总投票: ${summary.totalVotes}", fontSize = 11.sp, color = TextSecondary)
 
-            // 投票选项
-            AnimatedVisibility(visible = showVoteOptions) {
-                Column {
+                // 友好度进度条
+                Spacer(Modifier.height(8.dp))
+                val ratio = if (summary.totalVotes > 0) summary.friendlyCount.toFloat() / summary.totalVotes else 0f
+                LinearProgressIndicator(
+                    progress = ratio,
+                    modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
+                    color = FriendlyGreen,
+                    trackColor = Color(0xFFE0E0E0)
+                )
+
+                // 已投票信息
+                if (existingVoteType != null) {
                     Spacer(Modifier.height(8.dp))
-                    Text("你觉得这里怎么样？", fontSize = 14.sp, color = TextSecondary)
-                    Spacer(Modifier.height(8.dp))
-
-                    VoteOption("🥰 女性友好", "安心、舒适、设施完善", FriendlyGreen) {
-                        showVoteOptions = false
-                        onSubmitVote?.invoke("friendly")
+                    val voteLabel = when (existingVoteType) {
+                        "friendly" -> "🥰 友好"
+                        "generally_friendly" -> "🙂 一般"
+                        "not_friendly" -> "😐 不友好"
+                        else -> existingVoteType
                     }
-                    Spacer(Modifier.height(6.dp))
-                    VoteOption("😐 不够友好", "有改进空间，体验一般", NeutralYellow) {
-                        showVoteOptions = false
-                        onSubmitVote?.invoke("not_friendly")
-                    }
-                    Spacer(Modifier.height(6.dp))
-                    VoteOption("😡 很不友好", "感到不适、不安全", UnfriendlyRed) {
-                        showVoteOptions = false
-                        onSubmitVote?.invoke("very_unfriendly")
-                    }
-                }
-            }
-
-            // 底部分组按钮
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                if (onSubmitVote != null) {
-                    Button(
-                        onClick = { showVoteOptions = !showVoteOptions },
-                        shape = RoundedCornerShape(20.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = if (existingVoteType != null) NeutralYellow else PinkPrimary),
-                        enabled = true
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = FriendlyGreen.copy(alpha = 0.12f)
                     ) {
-                        Text(
-                            if (showVoteOptions) "取消" else if (existingVoteType != null) "修改投票" else "投票",
-                            color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp
-                        )
+                        Text(" 我的评价: $voteLabel", fontSize = 13.sp, color = FriendlyGreen, fontWeight = FontWeight.Medium, modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
                     }
-                    Spacer(Modifier.width(8.dp))
+                    Spacer(Modifier.height(4.dp))
                 }
-                TextButton(onClick = onDismiss) { Text("关闭", color = PinkPrimary) }
+
+                // ── 投票选项（可滑动） ──
+                AnimatedVisibility(visible = showVoteOptions) {
+                    Column(modifier = Modifier.heightIn(max = 200.dp).verticalScroll(rememberScrollState())) {
+                        Spacer(Modifier.height(8.dp))
+                        Text("你觉得这里怎么样？", fontSize = 14.sp, color = TextSecondary)
+                        Spacer(Modifier.height(8.dp))
+
+                        VoteOption("🥰 友好", "安心、舒适、设施完善", FriendlyGreen) {
+                            showVoteOptions = false; onSubmitVote?.invoke("friendly")
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        VoteOption("🙂 一般", "还可以，整体体验不错", NeutralYellow) {
+                            showVoteOptions = false; onSubmitVote?.invoke("generally_friendly")
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        VoteOption("😐 不友好", "有改进空间", Color(0xFFFF9800)) {
+                            showVoteOptions = false; onSubmitVote?.invoke("not_friendly")
+                        }
+                    }
+                }
+
+                // ── 底部按钮 ──
+                Spacer(Modifier.height(8.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    if (onSubmitVote != null) {
+                        FilledTonalButton(
+                            onClick = { showVoteOptions = !showVoteOptions },
+                            shape = RoundedCornerShape(20.dp),
+                            colors = ButtonDefaults.filledTonalButtonColors(
+                                containerColor = if (showVoteOptions) Color(0xFFEEEEEE) else color.copy(alpha = 0.15f),
+                                contentColor = if (showVoteOptions) TextSecondary else color
+                            )
+                        ) {
+                            Icon(
+                                if (showVoteOptions) Icons.Default.Close else Icons.Default.ThumbUp,
+                                null, modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                if (showVoteOptions) "收起" else if (existingVoteType != null) "修改投票" else "投票",
+                                fontWeight = FontWeight.Bold, fontSize = 14.sp
+                            )
+                        }
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    FilledTonalButton(
+                        onClick = onDismiss,
+                        shape = RoundedCornerShape(20.dp),
+                        colors = ButtonDefaults.filledTonalButtonColors(
+                            containerColor = Color(0xFFEEEEEE),
+                            contentColor = TextSecondary
+                        )
+                    ) {
+                        Icon(Icons.Default.Close, null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("关闭", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    }
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun StatTab(emoji: String, count: String, label: String, color: Color) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text("$emoji $count", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = color)
+        Text(label, fontSize = 11.sp, color = color.copy(alpha = 0.7f))
     }
 }
 
